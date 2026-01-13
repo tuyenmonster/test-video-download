@@ -37,7 +37,7 @@ android {
         includeInBundle = false
     }
 
-    ndkVersion "27.3.13750724"
+    ndkVersion "28.2.13676358"
 
     packagingOptions {
         resources {
@@ -330,6 +330,13 @@ static def findNdkPath(Project project) {
 }
 
 def ndkPath = findNdkPath(project)
+def osName = System.getProperty("os.name").toLowerCase()
+def hostTag =
+        osName.contains("windows") ? "windows-x86_64" :
+                osName.contains("mac")     ? "darwin-x86_64"  :
+                        "linux-x86_64"
+
+println "Detected host OS: ${osName}, using NDK prebuilt: ${hostTag}"
 
 def archConfigs = [
         'arm64-v8a'  : [goArch: 'arm64', target: 'aarch64-linux-android'],
@@ -455,23 +462,34 @@ archConfigs.each { abi, config ->
         workingDir builderDir
 
         def apiLevel = 21
-        def toolchainPath = "${ndkPath}/toolchains/llvm/prebuilt/linux-x86_64"
-        def compiler = "${toolchainPath}/bin/${target}${apiLevel}-clang"
+        def toolchainPath = "${ndkPath}/toolchains/llvm/prebuilt/${hostTag}"
+
+        def clangExt = osName.contains("windows") ? ".exe" : ""
+        def compiler = "${toolchainPath}/bin/clang${clangExt}"
+        def cxxCompiler = osName.contains("windows")
+                ? "${toolchainPath}/bin/clang++.exe"
+                : "${toolchainPath}/bin/clang++"
+
+        def targetTriple = "${target}${apiLevel}"
         def sysroot = "${toolchainPath}/sysroot"
 
         environment 'CGO_ENABLED', '1'
         environment 'GOOS', 'android'
         environment 'GOARCH', goArch
-        environment 'CC', compiler
-        environment 'CGO_CFLAGS', "--sysroot=${sysroot}"
-        environment 'CGO_LDFLAGS', "--sysroot=${sysroot} -llog -Wl,-z,max-page-size=16384"
+        environment 'CC', "${compiler} --target=${targetTriple}"
+        environment 'CXX', "${cxxCompiler} --target=${targetTriple}"
+        environment 'CGO_CFLAGS', ""
+        environment 'CGO_LDFLAGS', "-llog -Wl,-z,max-page-size=16384"
+
 
         doFirst {
             println "--- (BUILD) Executing Go build for ${abi} ---"
+            println "Using CC: ${compiler}"
             if (!file(compiler).exists()) {
-                throw new GradleException("C compiler for ${abi} not found at path: ${compiler}. Check NDK installation and path.")
+                throw new GradleException("clang not found at ${compiler}")
             }
         }
+
 
         // Use '-mod=vendor' to force the compiler to use the local vendor directory.
         commandLine goExecutable, 'build',
